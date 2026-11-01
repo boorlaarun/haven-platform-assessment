@@ -1,17 +1,3 @@
-# B1 — The Glacier cost gotcha
-#
-# Sold listings' photos archive to Glacier 30 days after upload, to cut storage cost. Separately
-# (not modeled in Terraform — it's an application-level flow), a seller can request deletion of
-# their listing data, which must happen within 30 days of the request.
-#
-# Reason through: a photo archives to Glacier on day 30. The seller requests deletion on day 40.
-# You delete it immediately. What does that actually cost, given Glacier's minimum storage
-# duration, and what would you change here?
-
-resource "aws_s3_bucket" "listing_media" {
-  bucket = "haven-listing-media"
-}
-
 resource "aws_s3_bucket_lifecycle_configuration" "listing_media_archive" {
   bucket = aws_s3_bucket.listing_media.id
 
@@ -19,9 +5,27 @@ resource "aws_s3_bucket_lifecycle_configuration" "listing_media_archive" {
     id     = "archive-sold-listing-photos"
     status = "Enabled"
 
+    # Don't archive tiny objects: per-object transition + metadata overhead
+    # outweighs the storage saving.
+    filter {
+      object_size_greater_than = 131072   # 128 KB
+    }
+
     transition {
-      days          = 30
+      # Was 30. Glacier bills a 90-day minimum, so archiving at day 30 makes
+      # any deletion  in the next 90 days incur early-deletion fees.
+      # Tune this number using real data on when deletion requests arrive.
+      days          = 90
       storage_class = "GLACIER"
+    }
+  }
+
+  rule {
+    id     = "abort-incomplete-multipart"
+    status = "Enabled"
+    filter {}
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
     }
   }
 }
