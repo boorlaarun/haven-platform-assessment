@@ -19,13 +19,35 @@ Run manually: python scripts/cost_tag_check.py fixtures/plan.json
 import json
 import sys
 
+REQUIRED_TAG = "landlord_account_id"
+
 
 def check_plan(plan_path: str) -> int:
     """
     Returns an exit code: 0 if every taggable resource being created/changed has
     `landlord_account_id`, non-zero otherwise.
     """
-    raise NotImplementedError("Implement this.")
+    with open(plan_path) as f:
+        plan = json.load(f)
+
+    # Idempotency key = resource address. A set removes duplicates and
+    # sorted() below fixes the output order, so reruns give identical output.
+    missing = set()
+    for rc in plan.get("resource_changes", []):
+        change = rc.get("change") or {}
+        actions = change.get("actions", [])
+        if "create" not in actions and "update" not in actions:
+            continue  # no-op / read / pure delete
+        after = change.get("after") or {}
+        if "tags" not in after:
+            continue  # resource type has no tags attribute
+        tags = after["tags"] or {}
+        if not tags.get(REQUIRED_TAG):
+            missing.add(rc["address"])
+
+    for address in sorted(missing):
+        print(f"MISSING {REQUIRED_TAG}: {address}")
+    return 1 if missing else 0
 
 
 if __name__ == "__main__":
